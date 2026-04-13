@@ -4,6 +4,7 @@
 const { Client, GatewayIntentBits, Partials, REST, Routes } = require('discord.js');
 const cron = require('node-cron');
 require('dotenv').config();
+
 // =========================
 // 🧪 DEBUG BOOT
 // =========================
@@ -33,6 +34,7 @@ const client = new Client({
     Partials.User
   ]
 });
+
 // =========================
 // 🧪 DISCORD DEBUG EVENTS
 // =========================
@@ -54,9 +56,6 @@ const getChannel = (guild, id) => guild.channels.cache.get(id);
 client.once('ready', async () => {
   console.log(`Connecté : ${client.user.tag}`);
 
-  // =========================
-  // 📌 AUTO RULES REACTION SETUP
-  // =========================
   try {
     const rulesChannelId = process.env.CHANNEL_RULES || process.env.CHANNEL_CMD;
 
@@ -73,9 +72,7 @@ client.once('ready', async () => {
     console.error('❌ Failed to setup rules reaction:', err);
   }
 
-  // 🔥 Register GUILD-ONLY slash commands (instant update)
-  const commands = []; // Add your slash commands here
-
+  const commands = [];
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
   try {
@@ -94,12 +91,17 @@ client.once('ready', async () => {
 // =========================
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
+
+  if (!reaction.message.guild || reaction.message.guild.id !== process.env.GUILD_ID) return;
+
   if (reaction.partial) await reaction.fetch();
   if (reaction.message.partial) await reaction.message.fetch();
 
   if (reaction.message.id !== process.env.MESSAGE_ID) return;
 
   const guild = reaction.message.guild;
+  if (!guild) return;
+
   const member = await guild.members.fetch(user.id);
 
   const memberRole = getRole(guild, process.env.ROLE_MEMBER);
@@ -124,14 +126,22 @@ const spam = new Map();
 setInterval(() => spam.clear(), 600000);
 
 client.on('messageCreate', async (msg) => {
-  if (!msg.guild) return;
+  if (!msg.guild || msg.guild.id !== process.env.GUILD_ID) return;
+
+  const MAX = Number(process.env.MAX_MESSAGES);
+  const INTERVAL = Number(process.env.INTERVAL);
+  const DUP = Number(process.env.DUPLICATE_THRESHOLD);
+
   if (isStaff(msg.member)) return;
-  if (msg.author.bot && !(process.env.EXEMPT_BOTS?.split(',') || []).includes(msg.author.id)) return;
+
+  if (msg.author.bot && !(process.env.EXEMPT_BOTS?.split(',') || []).includes(msg.author.id)) {
+    return handleSpam(msg);
+  }
 
   const now = Date.now();
   const data = spam.get(msg.author.id) || { c: 0, t: now, m: [] };
 
-  if (now - data.t > process.env.INTERVAL) {
+  if (now - data.t > INTERVAL) {
     Object.assign(data, { c: 0, m: [], t: now });
   }
 
@@ -141,7 +151,7 @@ client.on('messageCreate', async (msg) => {
 
   const dup = data.m.filter(x => x === msg.content).length;
 
-  if ((dup >= process.env.DUPLICATE_THRESHOLD && now - data.t <= process.env.INTERVAL) || data.c >= process.env.MAX_MESSAGES) {
+  if ((dup >= DUP && now - data.t <= INTERVAL) || data.c >= MAX) {
     return handleSpam(msg);
   }
 });
@@ -183,7 +193,7 @@ let lockdown = false;
 const lockdownBackup = new Map();
 
 client.on('messageCreate', async (msg) => {
-  if (!msg.guild || msg.author.bot) return;
+  if (!msg.guild || msg.guild.id !== process.env.GUILD_ID || msg.author.bot) return;
   if (msg.channel.id !== process.env.CHANNEL_CMD) return;
   if (!isStaff(msg.member)) return;
 
@@ -198,7 +208,7 @@ client.on('messageCreate', async (msg) => {
   }
 
   if (cmd === '!lockdown') {
-    lockdown = true;
+    const staffRoles = process.env.ROLE_STAFF?.split(',') || [];
 
     for (const ch of guild.channels.cache.values()) {
       if (!ch.isTextBased()) continue;
@@ -210,31 +220,31 @@ client.on('messageCreate', async (msg) => {
         deny: o.deny.bitfield
       })));
 
-      await ch.permissionOverwrites.edit(guild.roles.everyone, {
-        SendMessages: false
-      });
+      for (const role of guild.roles.cache.values()) {
+        if (staffRoles.includes(role.id)) continue;
+
+        await ch.permissionOverwrites.edit(role.id, {
+          SendMessages: false
+        });
+      }
     }
 
     return msg.reply('🚨 Lockdown activé');
   }
 
   if (cmd === '!unlockdown') {
-    lockdown = false;
-
     for (const ch of guild.channels.cache.values()) {
       if (!ch.isTextBased()) continue;
 
       const backup = lockdownBackup.get(ch.id);
       if (!backup) continue;
 
-      await ch.permissionOverwrites.set(
-        backup.map(o => ({
-          id: o.id,
-          type: o.type,
-          allow: o.allow,
-          deny: o.deny
-        }))
-      );
+      for (const perm of backup) {
+        await ch.permissionOverwrites.edit(perm.id, {
+          allow: perm.allow,
+          deny: perm.deny
+        });
+      }
     }
 
     lockdownBackup.clear();
@@ -259,12 +269,10 @@ cron.schedule('30 15 * * 2,4', async () => {
 // =========================
 let hb = Date.now();
 
-// heartbeat automatique toutes les 30s
 setInterval(() => {
   hb = Date.now();
 }, 30000);
 
-// surveille uniquement le ping
 setInterval(() => {
   if (client.ws.ping > 10000) {
     console.error('Watchdog restart (ping)');
@@ -272,7 +280,6 @@ setInterval(() => {
   }
 }, 15000);
 
-// erreurs critiques
 process.on('uncaughtException', console.error);
 process.on('unhandledRejection', console.error);
 
