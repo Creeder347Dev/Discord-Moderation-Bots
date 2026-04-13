@@ -92,6 +92,7 @@ client.once('ready', async () => {
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
 
+  // 🔒 Guild-only (on ne touche pas)
   if (!reaction.message.guild || reaction.message.guild.id !== process.env.GUILD_ID) return;
 
   if (reaction.partial) await reaction.fetch();
@@ -107,15 +108,24 @@ client.on('messageReactionAdd', async (reaction, user) => {
   const memberRole = getRole(guild, process.env.ROLE_MEMBER);
   const sanctionRole = getRole(guild, process.env.ROLE_SANCTION);
 
+  // 🔒 Si déjà sanctionné → juste supprimer réaction
   if (sanctionRole && member.roles.cache.has(sanctionRole.id)) {
-    return reaction.users.remove(user.id);
+    return reaction.users.remove(user.id).catch(console.error);
   }
 
+  // 🔥 SUPPRESSION SYSTÉMATIQUE
+  await reaction.users.remove(user.id).catch(console.error);
+
+  // ✅ Bon emoji → rôle membre
   if (reaction.emoji.name === process.env.EMOJI) {
-    memberRole && member.roles.add(memberRole);
+    if (memberRole && !member.roles.cache.has(memberRole.id)) {
+      await member.roles.add(memberRole).catch(console.error);
+    }
   } else {
-    await reaction.users.remove(user.id);
-    sanctionRole && member.roles.add(sanctionRole);
+    // ❌ Mauvais emoji → sanction
+    if (sanctionRole && !member.roles.cache.has(sanctionRole.id)) {
+      await member.roles.add(sanctionRole).catch(console.error);
+    }
   }
 });
 
