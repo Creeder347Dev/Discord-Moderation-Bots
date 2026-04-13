@@ -113,12 +113,13 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
   const memberRole = getRole(guild, process.env.ROLE_MEMBER);
   const sanctionRole = getRole(guild, process.env.ROLE_SANCTION);
+  const logChannel = getChannel(guild, process.env.CHANNEL_LOG);
 
   if (sanctionRole && member.roles.cache.has(sanctionRole.id)) {
     return reaction.users.remove(user.id).catch(console.error);
   }
 
-  // 🔥 SUPPRESSION SYSTÉMATIQUE
+  // 🔥 suppression
   await reaction.users.remove(user.id).catch(console.error);
 
   if (reaction.emoji.name === process.env.EMOJI) {
@@ -128,6 +129,10 @@ client.on('messageReactionAdd', async (reaction, user) => {
   } else {
     if (sanctionRole && !member.roles.cache.has(sanctionRole.id)) {
       await member.roles.add(sanctionRole).catch(console.error);
+
+      if (logChannel) {
+        logChannel.send(`🚨 ${member.user.tag} a cliqué sur un mauvais emoji (${reaction.emoji.name})`);
+      }
     }
   }
 });
