@@ -10,23 +10,30 @@ require('dotenv').config();
 // =========================
 const CONFIG = {
   TOKEN: process.env.TOKEN,
+  CLIENT_ID: process.env.CLIENT_ID,
+  GUILD_ID: process.env.GUILD_ID,
+
   IDS: {
     MESSAGE: process.env.MESSAGE_ID,
     CMD: process.env.CHANNEL_CMD,
     LOG: process.env.CHANNEL_LOG
   },
+
   ROLES: {
     MEMBER: process.env.ROLE_MEMBER,
     SANCTION: process.env.ROLE_SANCTION,
     SPAM: process.env.ROLE_SPAM,
     STAFF: process.env.ROLE_STAFF?.split(',') || []
   },
+
   EMOJI: process.env.EMOJI,
+
   ANTISPAM: {
     MAX: +process.env.MAX_MESSAGES,
     INTERVAL: +process.env.INTERVAL,
     DUP: +process.env.DUPLICATE_THRESHOLD
   },
+
   EXEMPT_BOTS: process.env.EXEMPT_BOTS?.split(',') || []
 };
 
@@ -53,13 +60,17 @@ const getChannel = (guild, id) => guild.channels.cache.get(id);
 // =========================
 // 🚀 READY
 // =========================
-client.once('ready', () => console.log(`Connecté : ${client.user.tag}`));
+client.once('ready', () => {
+  console.log(`Connecté : ${client.user.tag}`);
+});
 
 // =========================
 // 🎯 REACTION ROLE
 // =========================
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
+  if (!reaction.message.guild || reaction.message.guild.id !== CONFIG.GUILD_ID) return;
+
   if (reaction.partial) await reaction.fetch();
   if (reaction.message.partial) await reaction.message.fetch();
 
@@ -90,7 +101,8 @@ const spam = new Map();
 setInterval(() => spam.clear(), 600000);
 
 client.on('messageCreate', async (msg) => {
-  if (!msg.guild) return;
+  if (!msg.guild || msg.guild.id !== CONFIG.GUILD_ID) return;
+
   if (isStaff(msg.member)) return;
   if (msg.author.bot && !CONFIG.EXEMPT_BOTS.includes(msg.author.id)) return;
 
@@ -145,11 +157,11 @@ async function handleSpam(msg) {
 // =========================
 // 🔓 COMMANDES + LOCKDOWN
 // =========================
-let lockdown = false;
-const lockdownBackup = new Map();
+let lockdownBackup = new Map();
 
 client.on('messageCreate', async (msg) => {
-  if (!msg.guild || msg.author.bot) return;
+  if (!msg.guild || msg.guild.id !== CONFIG.GUILD_ID) return;
+  if (msg.author.bot) return;
   if (msg.channel.id !== CONFIG.IDS.CMD) return;
   if (!isStaff(msg.member)) return;
 
@@ -164,8 +176,6 @@ client.on('messageCreate', async (msg) => {
   }
 
   if (cmd === '!lockdown') {
-    lockdown = true;
-
     for (const ch of guild.channels.cache.values()) {
       if (!ch.isTextBased()) continue;
 
@@ -185,8 +195,6 @@ client.on('messageCreate', async (msg) => {
   }
 
   if (cmd === '!unlockdown') {
-    lockdown = false;
-
     for (const ch of guild.channels.cache.values()) {
       if (!ch.isTextBased()) continue;
 
@@ -215,23 +223,17 @@ cron.schedule('30 15 * * 2,4', () => {
 }, { timezone: 'Europe/Paris' });
 
 // =========================
-// 🛡️ WATCHDOG
+// 🛡️ WATCHDOG FIX
 // =========================
-let hb = Date.now();
-const beat = () => hb = Date.now();
-
-client.on('ready', beat);
-client.on('messageCreate', beat);
-
 setInterval(() => {
-  if (Date.now() - hb > 60000 || client.ws.ping > 10000) {
+  if (client.ws.ping > 10000) {
     console.error('Watchdog restart');
     process.exit(1);
   }
 }, 15000);
 
-process.on('uncaughtException', () => process.exit(1));
-process.on('unhandledRejection', () => process.exit(1));
+process.on('uncaughtException', console.error);
+process.on('unhandledRejection', console.error);
 
 // =========================
 // ▶️ LOGIN
